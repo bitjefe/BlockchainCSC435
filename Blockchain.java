@@ -38,14 +38,8 @@ import java.io.*;
 import java.net.*;
 import java.util.concurrent.*;
 import java.security.*;
-//import javax.xml.bind.JAXBContext;
-//import javax.xml.bind.JAXBException;
-//import javax.xml.bind.Marshaller;
-//import javax.xml.bind.Unmarshaller;
 
-//import javax.xml.bind.annotation.XmlAttribute;
-//import javax.xml.bind.annotation.XmlElement;
-//import javax.xml.bind.annotation.XmlRootElement;
+//import javax.xml.bind.*;
 
 import java.io.StringWriter;
 import java.io.StringReader;
@@ -203,17 +197,23 @@ class UnverifiedBlockConsumer implements Runnable {
                 data = queue.take(); // Will blocked-wait on empty queue
                 System.out.println("Consumer got unverified: " + data);
 
-                // Ordindarily we would do real work here, based on the incoming data.
+                // Ordinarily we would do real work here, based on the incoming data.
                 int j; // Here we fake doing some work (That is, here we could cheat, so not ACTUAL work...)
                 for(int i=0; i< 100; i++){ // put a limit on the fake work for this example
                     j = ThreadLocalRandom.current().nextInt(0,10);
                     try{Thread.sleep(500);}catch(Exception e){e.printStackTrace();}
                     if (j < 3) break; // <- how hard our fake work is; about 1.5 seconds.
                 }
-	
+
+
+                System.out.println(Blockchain.blockchain.indexOf(data));
+
+
 	/* With duplicate blocks that have been verified by different procs ordinarily we would keep only the one with
-           the lowest verification timestamp. For the exmple we use a crude filter, which also may let some dups through */
-                if(Blockchain.blockchain.indexOf(data.substring(1, 9)) < 0){ // Crude, but excludes most duplicates.
+           the lowest verification timestamp. For the example we use a crude filter, which also may let some dups through */
+
+                if(Blockchain.blockchain.indexOf(data) < 0){ // Crude, but excludes most duplicates. FIX THIS ONLY ADDS 10 / 12 records correctly
+
                     fakeVerifiedBlock = "[" + data + " verified by P" + PID + " at time "
                             + Integer.toString(ThreadLocalRandom.current().nextInt(100,1000)) + "]\n";
                     System.out.println(fakeVerifiedBlock);
@@ -345,7 +345,7 @@ class BlockRecord{
 // Class Blockchain
 public class Blockchain {
 
-    int PID;
+    static int PID;
     static String serverName = "localhost";
     static String blockchain = "[First block]";
     static int numProcesses = 3; // Set this to match your batch execution file that starts N processes with args 0,1,2,...N
@@ -364,7 +364,8 @@ public class Blockchain {
         return (keyGenerator.generateKeyPair());
     }
 
-    /*
+
+/*
     public static String Marshaller(BlockRecord[] blockArrayNew, int index) throws JAXBException {
         String realBlock = null;
         String stringXML;
@@ -404,8 +405,9 @@ public class Blockchain {
         //MultiSendNewBlock(XMLBlock);
         return realBlock;
     }
+*/
 
-    */
+
 
 
     public BlockRecord[] BlockInput() {
@@ -426,8 +428,6 @@ public class Blockchain {
         int pnum;
         int UnverifiedBlockPort;
         int BlockChainPort;
-
-        System.out.println("PID = "+PID);
 
         if(PID == 0)         pnum = 0;
         else if (PID == 1)   pnum = 1;
@@ -454,12 +454,14 @@ public class Blockchain {
                 String suuid;
                 UUID idA;
 
-                //JAXBContext jaxbContext = JAXBContext.newInstance(BlockRecord.class);
-                //Marshaller jaxbMarshaller = jaxbContext.createMarshaller();
-                // StringWriter sw = new StringWriter();
+/*                JAXBContext jaxbContext = JAXBContext.newInstance(BlockRecord.class);
+                Marshaller jaxbMarshaller = jaxbContext.createMarshaller();
+                StringWriter sw = new StringWriter();
 
                 // CDE Make the output pretty printed:
-                //jaxbMarshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
+                jaxbMarshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
+
+                */
 
                 int n = 0;
 
@@ -487,9 +489,10 @@ public class Blockchain {
                     blockArray[n].setGRx(tokens[iRX]);
 
 
-                    //MultiSend(Marshaller(new BlockRecord[]{blockArray[n]}, n));
-                    //Marshaller(new BlockRecord[]{blockArray[n]}, n);
-                    System.out.println("N = " + n);
+/*                    MultiSendNewBlock(Marshaller(new BlockRecord[]{blockArray[n]}, n));
+                    Marshaller(new BlockRecord[]{blockArray[n]}, n);
+                    */
+
                     n++;
                 }
 
@@ -499,7 +502,7 @@ public class Blockchain {
     }
 
 
-    public void MultiSendNewBlock (String block) { // Multicast some data to each of the processes.
+    public void MultiSendNewBlock(String block) { // Multicast some data to each of the processes.
         Socket sock;
         PrintStream toServer;
 
@@ -559,9 +562,9 @@ public class Blockchain {
             System.out.println("KEYS ARE EQUAL");
         }else{
             System.out.println("KEYS ARE NOT EQUAL");
-            System.out.println(PublicKeyWorker.pubKeyArray[0]);
-            System.out.println(PublicKeyWorker.pubKeyArray[1]);
-            System.out.println(PublicKeyWorker.pubKeyArray[2]);
+            //System.out.println(PublicKeyWorker.pubKeyArray[0]);
+            //System.out.println(PublicKeyWorker.pubKeyArray[1]);
+            //System.out.println(PublicKeyWorker.pubKeyArray[2]);
         }
 
         /*
@@ -571,23 +574,23 @@ public class Blockchain {
         }
         */
 
-        // BlockRecord[] blockRecord = new Blockchain().BlockInput(PID); // Multicast some new unverified blocks out to all servers as data
+        BlockRecord[] blockRecord = new Blockchain(PID).BlockInput(); // Multicast some new unverified blocks out to all servers as data
 
-
-        /*
         int indexCount = 0;
         while(blockRecord[indexCount]!=null){
             indexCount++;
         }
 
         for(int i=0;i<indexCount;i++){
-            String realBlock = Marshaller(new BlockRecord[]{blockRecord[i]},i);
-            new Blockchain().MultiSendNewBlock(realBlock);
+            BlockRecord[] realBlock = new Blockchain(PID).BlockInput();
+            System.out.println(realBlock[i].getFFname());
+           // String realBlock = Marshaller(new BlockRecord[]{blockRecord[i]},i);
+            new Blockchain(PID).MultiSendNewBlock(realBlock[i].getFFname());
         }
 
-*/
-        // try{Thread.sleep(1000);}catch(Exception e){} // Wait for multicast to fill incoming queue for our example.
 
-        // new Thread(new UnverifiedBlockConsumer(queue, PID)).start(); // Start consuming the queued-up unverified blocks
+         try{Thread.sleep(1000);}catch(Exception e){} // Wait for multicast to fill incoming queue for our example.
+
+         new Thread(new UnverifiedBlockConsumer(queue, PID)).start(); // Start consuming the queued-up unverified blocks
     }
 }
