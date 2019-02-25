@@ -29,8 +29,9 @@
 
 //import sun.security.rsa.RSAPublicKeyImpl;
 
+
+import javax.xml.bind.annotation.*;
 import java.math.BigInteger;
-import java.security.interfaces.RSAPublicKey;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.RSAPublicKeySpec;
 import java.util.*;
@@ -39,16 +40,19 @@ import java.net.*;
 import java.util.concurrent.*;
 import java.security.*;
 
-//import javax.xml.bind.*;
+import javax.xml.bind.*;
+import javax.xml.bind.JAXBContext;
+import javax.xml.bind.JAXBException;
+import javax.xml.bind.Marshaller;
+import javax.xml.bind.Unmarshaller;
 
-import java.io.StringWriter;
-import java.io.StringReader;
+/*import javax.xml.bind.annotation.XmlAttribute;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.XmlRootElement;*/
 
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.regex.*;
-import java.util.StringTokenizer;
 
 /* class ProcessBlock{
   int processID;
@@ -144,13 +148,29 @@ class UnverifiedBlockServer implements Runnable {
 
     class UnverifiedBlockWorker extends Thread { // Class definition
         Socket sock; // Class member, socket, local to Worker.
+
+
         UnverifiedBlockWorker (Socket s) {sock = s;} // Constructor, assign arg s to local sock
         public void run(){
             try{
                 BufferedReader in = new BufferedReader(new InputStreamReader(sock.getInputStream()));
-                String data = in.readLine ();
-                System.out.println("Put in priority queue: " + data + "\n");
-                queue.put(data);
+
+                File xmlFileSent = new File(in.readLine());
+
+                try{
+                    JAXBContext jaxbContext = JAXBContext.newInstance(BlockRecord.class);
+                    Unmarshaller jaxbUnMarshaller = jaxbContext.createUnmarshaller();
+                    BlockRecord blockRecordUn = (BlockRecord) jaxbUnMarshaller.unmarshal(xmlFileSent);
+
+                    System.out.println("Put in priority queue: " + blockRecordUn.getFLname() + "\n");
+
+                    // priority quque not adding the first entrant???
+                    queue.put(blockRecordUn.getABlockID().toString());
+
+                }catch (JAXBException e){
+                    e.printStackTrace();
+                }
+
                 sock.close();
             } catch (Exception x){x.printStackTrace();}
         }
@@ -206,8 +226,8 @@ class UnverifiedBlockConsumer implements Runnable {
                 }
 
 
-                System.out.println(Blockchain.blockchain.indexOf(data));
-
+                System.out.println("data = " + data);
+                System.out.println("Blockchain.blockchain.indexOf(data) = "+ Blockchain.blockchain.indexOf(data));
 
 	/* With duplicate blocks that have been verified by different procs ordinarily we would keep only the one with
            the lowest verification timestamp. For the example we use a crude filter, which also may let some dups through */
@@ -268,7 +288,7 @@ class BlockchainServer implements Runnable {
 }
 
 
-//@XmlRootElement
+@XmlRootElement
 class BlockRecord{
 
     /* Examples of block fields: */
@@ -293,51 +313,51 @@ class BlockRecord{
 
 
     public String getASHA256String() {return SHA256String;}
-    //@XmlElement
+     @XmlElement
     public void setASHA256String(String SH){this.SHA256String = SH;}
 
     public String getASignedSHA256() {return SignedSHA256;}
-    // @XmlElement
+     @XmlElement
     public void setASignedSHA256(String SH){this.SignedSHA256 = SH;}
 
     public String getACreatingProcess() {return CreatingProcess;}
-    // @XmlElement
+     @XmlElement
     public void setACreatingProcess(String CP){this.CreatingProcess = CP;}
 
     public String getAVerificationProcessID() {return VerificationProcessID;}
-    //  @XmlElement
+      @XmlElement
     public void setAVerificationProcessID(String VID){this.VerificationProcessID = VID;}
 
     public String getABlockID() {return BlockID;}
-    //  @XmlElement
+     @XmlElement
     public void setABlockID(String BID){this.BlockID = BID;}
 
     public String getFSSNum() {return SSNum;}
-    //  @XmlElement
+      @XmlElement
     public void setFSSNum(String SS){this.SSNum = SS;}
 
     public String getFFname() {return Fname;}
-    //  @XmlElement
+      @XmlElement
     public void setFFname(String FN){this.Fname = FN;}
 
     public String getFLname() {return Lname;}
-    //   @XmlElement
+      @XmlElement
     public void setFLname(String LN){this.Lname = LN;}
 
     public String getFDOB() {return DOB;}
-    //  @XmlElement
+     @XmlElement
     public void setFDOB(String DOB){this.DOB = DOB;}
 
     public String getGDiag() {return Diag;}
-    //  @XmlElement
+      @XmlElement
     public void setGDiag(String D){this.Diag = D;}
 
     public String getGTreat() {return Treat;}
-    //  @XmlElement
+     @XmlElement
     public void setGTreat(String D){this.Treat = D;}
 
     public String getGRx() {return Rx;}
-    //   @XmlElement
+     @XmlElement
     public void setGRx(String D){this.Rx = D;}
 
 }
@@ -348,7 +368,7 @@ public class Blockchain {
     static int PID;
     static String serverName = "localhost";
     static String blockchain = "[First block]";
-    static int numProcesses = 3; // Set this to match your batch execution file that starts N processes with args 0,1,2,...N
+    static int numProcesses = 1; // Set this to match your batch execution file that starts N processes with args 0,1,2,...N
 
     public Blockchain(int PID) {
         this.PID = PID;
@@ -365,11 +385,13 @@ public class Blockchain {
     }
 
 
-/*
-    public static String Marshaller(BlockRecord[] blockArrayNew, int index) throws JAXBException {
+
+    public void Marshaller(BlockRecord[] blockArrayNew, int index) throws JAXBException, InterruptedException {
         String realBlock = null;
         String stringXML;
         int incrementer = index;
+        File xmlFile = new File("file.xml");
+        Thread.sleep(1000);
 
         index = 0;
 
@@ -387,26 +409,24 @@ public class Blockchain {
 
         System.out.println("\n");
 
-        stringXML = sw.toString();
+        //stringXML = sw.toString();
 
-        jaxbMarshaller.marshal(blockArrayNew[index], sw);
+        jaxbMarshaller.marshal(blockArrayNew[index], xmlFile);
+        MultiSendNewBlock(xmlFile);
 
-        realBlock = "(Block#" + Integer.toString(((Blockchain.PID+1)*10)+incrementer) + " from P"+ Blockchain.PID + ")";
-
-        System.out.println(realBlock);
+        //jaxbMarshaller.marshal(blockArrayNew[index], sw);
 
         String fullBlock = sw.toString();
-       // String XMLHeader = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>";
-       // String cleanBlock = fullBlock.replace(XMLHeader, "");                       // this is the block with the full data inserted
-        // Show the string of concatenated, individual XML blocks:
-        //String XMLBlock = XMLHeader + "\n<BlockLedger>" + cleanBlock + "</BlockLedger>";
-        //System.out.println(cleanBlock);
+        String XMLHeader = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>";
+        String cleanBlock = fullBlock.replace(XMLHeader, "");                       // this is the block with the full data inserted
+         //Show the string of concatenated, individual XML blocks:
+        String XMLBlock = XMLHeader + "\n<BlockLedger>" + cleanBlock + "</BlockLedger>";
 
-        //MultiSendNewBlock(XMLBlock);
-        return realBlock;
+        //jaxbMarshaller.marshal(fullBlock, xmlFile);
+        //MultiSendNewBlock(xmlFile);
+
+       // return fullBlock;
     }
-*/
-
 
 
 
@@ -454,14 +474,14 @@ public class Blockchain {
                 String suuid;
                 UUID idA;
 
-/*                JAXBContext jaxbContext = JAXBContext.newInstance(BlockRecord.class);
+              /* JAXBContext jaxbContext = JAXBContext.newInstance(BlockRecord.class);
                 Marshaller jaxbMarshaller = jaxbContext.createMarshaller();
                 StringWriter sw = new StringWriter();
 
                 // CDE Make the output pretty printed:
                 jaxbMarshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
+*/
 
-                */
 
                 int n = 0;
 
@@ -489,9 +509,8 @@ public class Blockchain {
                     blockArray[n].setGRx(tokens[iRX]);
 
 
-/*                    MultiSendNewBlock(Marshaller(new BlockRecord[]{blockArray[n]}, n));
+
                     Marshaller(new BlockRecord[]{blockArray[n]}, n);
-                    */
 
                     n++;
                 }
@@ -502,7 +521,7 @@ public class Blockchain {
     }
 
 
-    public void MultiSendNewBlock(String block) { // Multicast some data to each of the processes.
+    public static void MultiSendNewBlock(File block) { // Multicast some data to each of the processes.
         Socket sock;
         PrintStream toServer;
 
@@ -540,10 +559,12 @@ public class Blockchain {
     }
 
     public static void main(String args[]) throws Exception {
-        int q_len = 6; /* Number of requests for OpSys to queue. Not interesting. */
-        int PID = (args.length < 1) ? 0 : Integer.parseInt(args[0]); // Process ID
+        int q_len = 8; /* Number of requests for OpSys to queue. Not interesting. */
+        //int PID = (args.length < 1) ? 0 : Integer.parseInt(args[0]); // Process ID
 
-        System.out.println("Jeff Wiand's BlockFramework control-c to quit.\n");
+        int PID = 0;
+
+        System.out.println("BlockFramework control by Seth Weber-c to quit.\n");
         System.out.println("Using processID " + PID + "\n");
 
         final BlockingQueue<String> queue = new PriorityBlockingQueue<>();          // Concurrent queue for unverified blocks
@@ -576,21 +597,24 @@ public class Blockchain {
 
         BlockRecord[] blockRecord = new Blockchain(PID).BlockInput(); // Multicast some new unverified blocks out to all servers as data
 
+        /*
         int indexCount = 0;
         while(blockRecord[indexCount]!=null){
             indexCount++;
         }
 
         for(int i=0;i<indexCount;i++){
-            BlockRecord[] realBlock = new Blockchain(PID).BlockInput();
-            System.out.println(realBlock[i].getFFname());
-           // String realBlock = Marshaller(new BlockRecord[]{blockRecord[i]},i);
-            new Blockchain(PID).MultiSendNewBlock(realBlock[i].getFFname());
+            //BlockRecord[] realBlock = new Blockchain(PID).BlockInput();
+            //System.out.println(realBlock[i].getFLname());
+            //String realBlock = Marshaller(new BlockRecord[]{blockRecord[i]},i);
+            //new Blockchain(PID).MultiSendNewBlock(realBlock);
+            //new Blockchain(PID).MultiSendNewBlock(realBlock[i].getFLname());
         }
+        */
 
 
-         try{Thread.sleep(1000);}catch(Exception e){} // Wait for multicast to fill incoming queue for our example.
+        try{Thread.sleep(1000);}catch(Exception e){} // Wait for multicast to fill incoming queue for our example.
 
-         new Thread(new UnverifiedBlockConsumer(queue, PID)).start(); // Start consuming the queued-up unverified blocks
+        new Thread(new UnverifiedBlockConsumer(queue, PID)).start(); // Start consuming the queued-up unverified blocks
     }
 }
