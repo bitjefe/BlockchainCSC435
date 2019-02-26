@@ -32,6 +32,7 @@
 
 import javax.xml.bind.*;
 import javax.xml.bind.annotation.*;
+import javax.xml.namespace.QName;
 import javax.xml.transform.stream.StreamSource;
 import java.math.BigInteger;
 import java.security.spec.InvalidKeySpecException;
@@ -149,7 +150,6 @@ class UnverifiedBlockServer implements Runnable {
         UnverifiedBlockWorker (Socket s) {sock = s;}
         public void run(){
             try{
-
                 StringBuffer in = new StringBuffer();                                               // initialize a buffer for incoming stringwriter
                 Reader reader = new InputStreamReader(sock.getInputStream());                       // initialize a reader object and connect it to the socket for unverified blocks
 
@@ -192,37 +192,40 @@ class UnverifiedBlockConsumer implements Runnable {
     int PID;
     KeyPair keyPair;
 
-    UnverifiedBlockConsumer(BlockingQueue<String> queue, int PID, KeyPair keyPair){
+
+    UnverifiedBlockConsumer(BlockingQueue<String> queue, int PID, KeyPair keyPair) {
         this.queue = queue; // Constructor binds our prioirty queue to the local variable.
         this.PID = PID;
         this.keyPair = keyPair;
     }
 
-    public void run(){
+    public void run() {
         String data;
         PrintStream toServer;
         Socket sock;
         String newblockchain;
-        String fakeVerifiedBlock;
+        String verifiedBlock;
         BlockRecord blockRecord = null;
         int blockNumber = 1;
         String SHAHashString;
-        //ArrayList<String> blockSort= new ArrayList();
+        File BlockchainLedger = new File("BlockchainLedger.xml");
+
+        ArrayList<BlockRecord> blockLedgerList= new ArrayList();
 
         System.out.println("Starting the Unverified Block Priority Queue Consumer thread.\n");
 
 
-        try{
-            while(true){ // Consume from the incoming queue. Do the work to verify. Mulitcast new blockchain
+        try {
+            while (true) { // Consume from the incoming queue. Do the work to verify. Mulitcast new blockchain
                 data = queue.take(); // Will blocked-wait on empty queue
                 System.out.println("Consumer got unverified: " + data);
 
-                try{
+                try {
 
                     StringBuffer in = new StringBuffer();
                     Reader reader = new StringReader(data);
 
-                    int xmlInt=0;
+                    int xmlInt = 0;
 
                     while ((xmlInt = reader.read()) != -1) in.append((char) xmlInt);
 
@@ -233,7 +236,7 @@ class UnverifiedBlockConsumer implements Runnable {
 
                     StreamSource streamSource = new StreamSource(new StringReader(XMLStringSent));
 
-                    JAXBElement<BlockRecord> blockRecordJAXBElement = jaxbUnMarshaller.unmarshal(streamSource,BlockRecord.class);
+                    JAXBElement<BlockRecord> blockRecordJAXBElement = jaxbUnMarshaller.unmarshal(streamSource, BlockRecord.class);
 
                     blockRecord = (BlockRecord) blockRecordJAXBElement.getValue();
 
@@ -265,9 +268,6 @@ class UnverifiedBlockConsumer implements Runnable {
                     System.out.println("UUID Verified = " + verifiedSignedUUID);
 
 
-
-
-
                     // Verification of ASignedSHA256
                     //create our signed SHA256
                     String signedSHA256InputData = blockRecord.getASignedSHA256();
@@ -288,43 +288,51 @@ class UnverifiedBlockConsumer implements Runnable {
                     boolean verifiedSignedSHA256InputData = verifySig(signedSHA256InputDataString.getBytes(), keyPair.getPublic(), signatureSHA256InputDataBytes);   //verified if it corresponds to public key sig
 
                     System.out.println("SHA Input Data Verified = " + verifiedSignedSHA256InputData);
-
-
-                }catch (JAXBException e){
+                } catch (JAXBException e) {
                     e.printStackTrace();
                 }
+
+
+                //if the blockchain only contains [first-block]:
+                if (Blockchain.blockchain.length() == 13) {
+                    blockRecord.setBlockNum(1);
+                    SHAHashString = "FirstBlockHashString";
+                } else {
+                    blockNumber++;                                          //increment BlockNum for every new block prepended to the blockchain
+                    blockRecord.setBlockNum(blockNumber);                   //set the BlockNum to 1 plus the previous BlockNum
+                    SHAHashString = blockRecord.getASHA256String();
+                }
+
+                String verificationProcessID = ("P" + PID);
+                blockRecord.setAVerificationProcessID(verificationProcessID);     // set the verification signature with our PID
+
+                String UB = SHAHashString + blockNumber + verificationProcessID;        // what does it mean when it says to (b) the updated blockdata of this unverified block
+
+                int blockchainLength = Blockchain.blockchain.length();
+
+                Work(blockRecord, UB, blockchainLength);         // do our real work here
 
                 System.out.println("data = " + data);
                 System.out.println("Blockchain.blockchain.indexOf(data) = "+ Blockchain.blockchain.indexOf(data));
 
+                if (Blockchain.blockchain.indexOf(data) < 0) { //  Excludes all duplicates based on Last name of patient
 
-                if(Blockchain.blockchain.indexOf(data) < 0){ //  Excludes all duplicates based on Last name of patient
+                    verifiedBlock = "[Block" + blockRecord.getBlockNum() + " verified by P"+ PID /*blockRecord.getAVerificationProcessID()*/ + " at time "
+                            +timeStamp(PID)+"]\n";
+                    System.out.println(verifiedBlock);
 
-                    //if the blockchain only contains [first-block]:
-                    if(Blockchain.blockchain.length() == 13 ){
-                        blockRecord.setBlockNum(1);
-                        SHAHashString = "FirstBlockHashString";
-                    } else {
-                        blockNumber++;                                          //increment BlockNum for every new block prepended to the blockchain
-                        blockRecord.setBlockNum(blockNumber);                   //set the BlockNum to 1 plus the previous BlockNum
-                        SHAHashString = blockRecord.getASHA256String();
-                    }
+                    //add block to ledger here??
+                    //add the full block not just the verified block string?
 
-                    String verificationProcessID = "Process"+PID;
-                    blockRecord.setAVerificationProcessID(verificationProcessID);     // set the verification signature with our PID
+                    blockLedgerList.add(blockRecord);
 
-                    String UB = SHAHashString + blockNumber + verificationProcessID;        // what does it mean when it says to (b) the updated blockdata of this unverified block
-
-                    Work(blockRecord, UB);         // do our real work here
-
-                    fakeVerifiedBlock = "[Block" + blockRecord.getBlockNum()  + " verified by P" + PID + " at time "
-                            + Integer.toString(ThreadLocalRandom.current().nextInt(100,1000)) + "]\n";
-                    System.out.println(fakeVerifiedBlock);
-                    String tempblockchain = fakeVerifiedBlock + Blockchain.blockchain; // add the verified block to the chain
+                    MarshallertoLedger(blockLedgerList, PID, BlockchainLedger);
 
 
 
-                    for(int i=0; i < Blockchain.numProcesses; i++){ // send to each process in group, including us:
+                    String tempblockchain = data + Blockchain.blockchain; // add the verified block to the chain
+
+                    for (int i = 0; i < Blockchain.numProcesses; i++) { // send to each process in group, including us:
                         sock = new Socket(Blockchain.serverName, (Ports.BlockchainServerPortBase + i));
                         toServer = new PrintStream(sock.getOutputStream());
                         toServer.println(tempblockchain);                           // make the multicast
@@ -334,10 +342,12 @@ class UnverifiedBlockConsumer implements Runnable {
                 }
                 Thread.sleep(1500); // For the example, wait for our blockchain to be updated before processing a new block
             }
-        }catch (Exception e) {System.out.println(e);}
+        } catch (Exception e) {
+            System.out.println(e);
+        }
     }
 
-    private void Work(BlockRecord blockRecord, String UB) {
+    private void Work(BlockRecord blockRecord, String UB, int blockchainLength) {
 
         String randString;
 
@@ -351,50 +361,59 @@ class UnverifiedBlockConsumer implements Runnable {
         System.out.println("Concatenated: " + stringIn + randString + "\n");
 
 
-        blockRecord.setAGuessSeed(randString);
-        
-
         int workNumber = 0;     // Number will be between 0000 (0) and FFFF (65535), here's proof:
-        workNumber = Integer.parseInt("0000",16); // Lowest hex value
+        workNumber = Integer.parseInt("0000", 16); // Lowest hex value
         System.out.println("0x0000 = " + workNumber);
 
-        workNumber = Integer.parseInt("FFFF",16); // Highest hex value
+        workNumber = Integer.parseInt("FFFF", 16); // Highest hex value
         System.out.println("0xFFFF = " + workNumber + "\n");
 
         try {
 
-            for(int i=1; i<20; i++){ // Limit how long we try for this example.
+            for (int i = 1; i < 20; i++) { // Limit how long we try for this example.
                 randString = randomAlphaNumeric(8); // Get a new random AlphaNumeric seed string
                 concatString = stringIn + randString; // Concatenate with our input string (which represents Blockdata)
                 MessageDigest MD = MessageDigest.getInstance("SHA-256");
                 byte[] bytesHash = MD.digest(concatString.getBytes("UTF-8")); // Get the hash value
                 stringOut = DatatypeConverter.printHexBinary(bytesHash); // Turn into a string of hex values
                 System.out.println("Hash is: " + stringOut);
-                workNumber = Integer.parseInt(stringOut.substring(0,4),16); // Between 0000 (0) and FFFF (65535)
-                System.out.println("First 16 bits " + stringOut.substring(0,4) +": " + workNumber + "\n");
-                if (workNumber < 20000){  // lower number = more work.
+                workNumber = Integer.parseInt(stringOut.substring(0, 4), 16); // Between 0000 (0) and FFFF (65535)
+                System.out.println("First 16 bits " + stringOut.substring(0, 4) + ": " + workNumber + "\n");
+                if (workNumber < 20000) {  // lower number = more work.
                     System.out.println("Puzzle solved!");
                     System.out.println("The seed was: " + randString);
+                    blockRecord.setAGuessSeed(randString);
                     break;
                 }
                 // Here is where you would periodically check to see if the blockchain has been updated
                 // ...if so, then abandon this verification effort and start over.
-                // Here is where you will sleep if you want to extend the time up to a second or two.
-            }
-        }catch(Exception ex) {ex.printStackTrace();}
-    }
 
+                if (blockchainLength == Blockchain.blockchain.length()) {
+                    System.out.println("Blockchain is the same!!! ");
+
+                } else {
+                    //mark as unverified, add new blockNUm, start work again
+                    System.out.println("Blockchain has changed");
+                    break;
+                }
+
+                // Here is where you will sleep if you want to extend the time up to a second or two.
+                Thread.sleep(2000);
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
 
     public static String randomAlphaNumeric(int count) {
         final String ALPHA_NUMERIC_STRING = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         StringBuilder builder = new StringBuilder();
         while (count-- != 0) {
-            int character = (int)(Math.random()*ALPHA_NUMERIC_STRING.length());
+            int character = (int) (Math.random() * ALPHA_NUMERIC_STRING.length());
             builder.append(ALPHA_NUMERIC_STRING.charAt(character));
         }
         return builder.toString();
     }
-
 
     public static byte[] signData(byte[] data, PrivateKey key) throws Exception {
         Signature signer = Signature.getInstance("SHA1withRSA");
@@ -410,6 +429,55 @@ class UnverifiedBlockConsumer implements Runnable {
 
         return (signer.verify(sig));
     }
+
+    public static String timeStamp(int PID) {
+        Date date = new Date();
+        String T1 = String.format("%1$s %2$tF.%2$tT", "", date);
+        String timeStampVerified = T1 + "." + PID; // No timestamp collisions!
+        return timeStampVerified;
+    }
+
+    public static void MarshallertoLedger(ArrayList<BlockRecord> blockRecordtoAdd, int PID, File BlockchainLedger) throws JAXBException, InterruptedException, IOException {
+        String realBlock = null;
+        String stringXML;
+        Thread.sleep(1000);
+
+        JAXBContext jaxbContext = JAXBContext.newInstance(BlockRecord.class);
+        Marshaller jaxbMarshaller = jaxbContext.createMarshaller();
+        StringWriter sw = new StringWriter();
+
+        // CDE Make the output pretty printed:
+        jaxbMarshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
+
+        System.out.println("  " + blockRecordtoAdd);
+
+        System.out.println("\n");
+
+        int blockRecordtoAddSize = blockRecordtoAdd.size();
+        String blockRecordXMLString = "";
+
+
+
+        for(BlockRecord blockRecord:blockRecordtoAdd){
+            jaxbMarshaller.marshal(blockRecord, sw);
+            String fullBlock = sw.toString();
+            String XMLHeader = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>";
+            String cleanBlock = fullBlock.replace(XMLHeader, "");
+            String XMLBlock = XMLHeader + "\n<BlockLedger>" + cleanBlock + "</BlockLedger>";
+            JAXBElement<String> jaxbElement = new JAXBElement(new QName("root-element"), String.class, XMLBlock);
+            jaxbMarshaller.marshal(jaxbElement, BlockchainLedger);
+        }
+
+
+
+        //for(BlockRecord blockRecord:blockRecordtoAdd){
+        //    jaxbMarshaller.marshal(blockRecord, BlockchainLedger);
+       //}
+
+        // need to add in If(PID == 0) write to disk
+
+    }
+
 }
 
 
@@ -419,6 +487,7 @@ class UnverifiedBlockConsumer implements Runnable {
 
 class BlockchainWorker extends Thread { // Class definition
     Socket sock; // Class member, socket, local to Worker.
+
     BlockchainWorker (Socket s) {sock = s;} // Constructor, assign arg s to local sock
     public void run(){
         try{
@@ -430,6 +499,7 @@ class BlockchainWorker extends Thread { // Class definition
             }
             Blockchain.blockchain = data; // Would normally have to check first for winner before replacing.
             System.out.println("         --NEW BLOCKCHAIN--\n" + Blockchain.blockchain + "\n\n");
+
             sock.close();
         } catch (IOException x){x.printStackTrace();}
     }
@@ -556,7 +626,7 @@ public class Blockchain {
     static int PID;
     static String serverName = "localhost";
     static String blockchain = "[First block]";
-   // static int numProcesses = 3; // Set this to match your batch execution file that starts N processes with args 0,1,2,...N
+    //static int numProcesses = 3; // Set this to match your batch execution file that starts N processes with args 0,1,2,...N
     static int numProcesses = 1; // Set this to match your batch execution file that starts N processes with args 0,1,2,...N
 
     public Blockchain(int PID) {
@@ -604,6 +674,8 @@ public class Blockchain {
         stringXML = sw.toString();
 
         return stringXML;
+
+
     }
 
 
@@ -691,8 +763,6 @@ public class Blockchain {
                     //prepare SHASignedUUID string to be added to blockArray as Base64
                     String SHASignedUUID = getEncoder().encodeToString(SignatureSuuidBytes);
 
-
-                    //blockArray[n].setBlockNum("");
                     blockArray[n].setABlockID(suuid);                                                           //set UUID
                     blockArray[n].setASignedUUIDSHA256(SHASignedUUID);                                          //set SHASignedUUID with private Key
                     blockArray[n].setTimeStamp(TimeStampString);
@@ -742,20 +812,6 @@ public class Blockchain {
                     blockArray[n].setASHA256String(SHA256InputDataString);
                     // add the Signed SHA256 Input Data String
                     blockArray[n].setASignedSHA256(SHASignedInputDash);
-
-
-/*
-                    // code to pull down block header and test verification of public / private key with SHA string
-                    byte[] testSignatureUUID = getDecoder().decode(blockArray[n].getASignedUUIDSHA256());
-                    byte[] testSignatureInput = getDecoder().decode(blockArray[n].getASignedSHA256());
-
-
-
-                    verified = verifySig(SHA256_UUIDString.getBytes(), keyPair.getPublic(), testSignatureUUID);
-                    //System.out.println("Has the restored signature been verified: " + verified + "\n");
-                    verified = verifySig(SHA256InputDataString.getBytes(), keyPair.getPublic(), testSignatureInput);
-                    //System.out.println("Has the restored signature been verified: " + verified + "\n");
-*/
 
                     n++;
                 }
@@ -820,11 +876,11 @@ public class Blockchain {
 
     public static void main(String args[]) throws Exception {
         int q_len = 8; /* Number of requests for OpSys to queue. Not interesting. */
-       // int PID = (args.length < 1) ? 0 : Integer.parseInt(args[0]); // Process ID
+      //  int PID = (args.length < 1) ? 0 : Integer.parseInt(args[0]); // Process ID
 
         int PID = 0;
 
-        System.out.println("BlockFramework control by Seth Weber-c to quit.\n");
+        System.out.println("BlockFramework control by Jeff Wiand-c to quit.\n");
         System.out.println("Using processID " + PID + "\n");
 
         final BlockingQueue<String> queue = new PriorityBlockingQueue<>();          // Concurrent queue for unverified blocks
@@ -861,11 +917,9 @@ public class Blockchain {
         }
 
 
-
         for(int i=0;i<indexCount;i++){
             String XMLString = Marshaller(blockRecord,i);
         }
-
 
 
         try{Thread.sleep(1000);}catch(Exception e){} // Wait for multicast to fill incoming queue for our example.
