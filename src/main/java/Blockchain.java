@@ -186,13 +186,16 @@ in order according to their blockID. Normally we would retreive the block with t
 is just an example of how to implement such a queue. It must be concurrent safe because two or more threads modifiy it
 "at once," (mutiple worker threads to add to the queue, and consumer thread to remove from it).*/
 
+
 class UnverifiedBlockConsumer implements Runnable {
     BlockingQueue<String> queue;
     int PID;
+    KeyPair keyPair;
 
-    UnverifiedBlockConsumer(BlockingQueue<String> queue, int PID){
+    UnverifiedBlockConsumer(BlockingQueue<String> queue, int PID, KeyPair keyPair){
         this.queue = queue; // Constructor binds our prioirty queue to the local variable.
         this.PID = PID;
+        this.keyPair = keyPair;
     }
 
     public void run(){
@@ -202,6 +205,8 @@ class UnverifiedBlockConsumer implements Runnable {
         String newblockchain;
         String fakeVerifiedBlock;
         BlockRecord blockRecord = null;
+        int blockNumber = 1;
+        String SHAHashString;
         //ArrayList<String> blockSort= new ArrayList();
 
         System.out.println("Starting the Unverified Block Priority Queue Consumer thread.\n");
@@ -232,26 +237,92 @@ class UnverifiedBlockConsumer implements Runnable {
 
                     blockRecord = (BlockRecord) blockRecordJAXBElement.getValue();
 
-                    System.out.println("Blockrecord receieved = " + blockRecord.getFLname());
 
-                    data = blockRecord.getFLname();                         //use the last name as a filter for data. Replace with a SHA Hash for increased duplicate filtering
+                    data = blockRecord.getABlockID();                                                                   //use the UUID as a filter for data per instructions
+
+
+                    //put these verification steps into their own function! Call twice with different input strings == cleaner code (works for now though)
+
+                    // Verification of ABlockID
+                    //create our signed UUID
+                    String blockSignedUUID = blockRecord.getASignedUUIDSHA256();
+
+                    MessageDigest mdSignedUUID = MessageDigest.getInstance("SHA-256");
+                    mdSignedUUID.update(blockSignedUUID.getBytes());
+
+                    byte signedUUIDBytes[] = mdSignedUUID.digest();
+                    StringBuffer sbSignedUUID = new StringBuffer();
+                    for (int i = 0; i < signedUUIDBytes.length; i++) {
+                        sbSignedUUID.append(Integer.toString((signedUUIDBytes[i] & 0xff) + 0x100, 16).substring(1));
+                    }
+
+                    //UUID Signed String
+                    String blockSignedUUIDString = sbSignedUUID.toString();
+
+                    byte[] SignatureUUIDBytes = signData(blockSignedUUIDString.getBytes(), keyPair.getPrivate());                       // get bytes of Signed UUID String
+                    boolean verifiedSignedUUID = verifySig(blockSignedUUIDString.getBytes(), keyPair.getPublic(), SignatureUUIDBytes);   //verified if it corresponds to public key sig
+
+                    System.out.println("UUID Verified = " + verifiedSignedUUID);
+
+
+
+
+
+                    // Verification of ASignedSHA256
+                    //create our signed SHA256
+                    String signedSHA256InputData = blockRecord.getASignedSHA256();
+
+                    MessageDigest mdSignedSHA256InputData = MessageDigest.getInstance("SHA-256");
+                    mdSignedSHA256InputData.update(signedSHA256InputData.getBytes());
+
+                    byte signedSHA256InputDataBytes[] = mdSignedSHA256InputData.digest();
+                    StringBuffer sbSignSHA256InputData = new StringBuffer();
+                    for (int i = 0; i < signedSHA256InputDataBytes.length; i++) {
+                        sbSignSHA256InputData.append(Integer.toString((signedSHA256InputDataBytes[i] & 0xff) + 0x100, 16).substring(1));
+                    }
+
+                    //UUID Signed String
+                    String signedSHA256InputDataString = sbSignSHA256InputData.toString();
+
+                    byte[] signatureSHA256InputDataBytes = signData(signedSHA256InputDataString.getBytes(), keyPair.getPrivate());                                    // get bytes of Signed Input Data SHA String
+                    boolean verifiedSignedSHA256InputData = verifySig(signedSHA256InputDataString.getBytes(), keyPair.getPublic(), signatureSHA256InputDataBytes);   //verified if it corresponds to public key sig
+
+                    System.out.println("SHA Input Data Verified = " + verifiedSignedSHA256InputData);
+
 
                 }catch (JAXBException e){
                     e.printStackTrace();
                 }
 
-
-                Work(blockRecord);         // do our real work here
-
                 System.out.println("data = " + data);
                 System.out.println("Blockchain.blockchain.indexOf(data) = "+ Blockchain.blockchain.indexOf(data));
 
+
                 if(Blockchain.blockchain.indexOf(data) < 0){ //  Excludes all duplicates based on Last name of patient
 
-                    fakeVerifiedBlock = "[" + data + " verified by P" + PID + " at time "
+                    //if the blockchain only contains [first-block]:
+                    if(Blockchain.blockchain.length() == 13 ){
+                        blockRecord.setBlockNum(1);
+                        SHAHashString = "FirstBlockHashString";
+                    } else {
+                        blockNumber++;                                          //increment BlockNum for every new block prepended to the blockchain
+                        blockRecord.setBlockNum(blockNumber);                   //set the BlockNum to 1 plus the previous BlockNum
+                        SHAHashString = blockRecord.getASHA256String();
+                    }
+
+                    String verificationProcessID = "Process"+PID;
+                    blockRecord.setAVerificationProcessID(verificationProcessID);     // set the verification signature with our PID
+
+                    String UB = SHAHashString + blockNumber + verificationProcessID;        // what does it mean when it says to (b) the updated blockdata of this unverified block
+
+                    Work(blockRecord, UB);         // do our real work here
+
+                    fakeVerifiedBlock = "[Block" + blockRecord.getBlockNum()  + " verified by P" + PID + " at time "
                             + Integer.toString(ThreadLocalRandom.current().nextInt(100,1000)) + "]\n";
                     System.out.println(fakeVerifiedBlock);
                     String tempblockchain = fakeVerifiedBlock + Blockchain.blockchain; // add the verified block to the chain
+
+
 
                     for(int i=0; i < Blockchain.numProcesses; i++){ // send to each process in group, including us:
                         sock = new Socket(Blockchain.serverName, (Ports.BlockchainServerPortBase + i));
@@ -266,18 +337,22 @@ class UnverifiedBlockConsumer implements Runnable {
         }catch (Exception e) {System.out.println(e);}
     }
 
-    private void Work(BlockRecord blockRecord) {
+    private void Work(BlockRecord blockRecord, String UB) {
 
         String randString;
 
         String concatString = "";  // Random seed string concatenated with the existing data
         String stringOut = ""; // Will contain the new SHA256 string converted to HEX and printable.
 
-        String stringIn = blockRecord.getFLname();
+        String stringIn = UB;
 
         randString = randomAlphaNumeric(8);
         System.out.println("Our random seed string: " + randString + "\n");
         System.out.println("Concatenated: " + stringIn + randString + "\n");
+
+
+        blockRecord.setAGuessSeed(randString);
+        
 
         int workNumber = 0;     // Number will be between 0000 (0) and FFFF (65535), here's proof:
         workNumber = Integer.parseInt("0000",16); // Lowest hex value
@@ -309,6 +384,7 @@ class UnverifiedBlockConsumer implements Runnable {
         }catch(Exception ex) {ex.printStackTrace();}
     }
 
+
     public static String randomAlphaNumeric(int count) {
         final String ALPHA_NUMERIC_STRING = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         StringBuilder builder = new StringBuilder();
@@ -317,6 +393,22 @@ class UnverifiedBlockConsumer implements Runnable {
             builder.append(ALPHA_NUMERIC_STRING.charAt(character));
         }
         return builder.toString();
+    }
+
+
+    public static byte[] signData(byte[] data, PrivateKey key) throws Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+        signer.initSign(key);
+        signer.update(data);
+        return (signer.sign());
+    }
+
+    public static boolean verifySig(byte[] data, PublicKey key, byte[] sig) throws Exception {
+        Signature signer = Signature.getInstance("SHA1withRSA");
+        signer.initVerify(key);
+        signer.update(data);
+
+        return (signer.verify(sig));
     }
 }
 
@@ -364,13 +456,14 @@ class BlockRecord{
 
     /* Examples of block fields: */
 
-    String BlockNum;
+    Integer BlockNum;
     String timeStamp;
     String signedUUIDSHA256;
     String SHA256String;
     String SignedSHA256;
     String BlockID;
     String VerificationProcessID;
+    String guessSeed;
     String CreatingProcess;
     String PreviousHash;
     String Fname;
@@ -386,9 +479,9 @@ class BlockRecord{
      by name of accessors, so A=header, F=Indentification, G=Medical: */
 
 
-    public String getBlockNum() {return BlockNum;}
+    public Integer getBlockNum() {return BlockNum;}
     @XmlElement
-    public void setBlockNum(String BNUM){this.BlockNum = BNUM;}                                         //Block number added to verified block
+    public void setBlockNum(Integer BNUM){this.BlockNum = BNUM;}                                         //Block number added to verified block
 
     public String getABlockID() {return BlockID;}
     @XmlElement
@@ -422,7 +515,9 @@ class BlockRecord{
       @XmlElement
     public void setAVerificationProcessID(String VID){this.VerificationProcessID = VID;}                //Verifing Process ID put into unverified block
 
-
+    public String getAGuessSeed(){return guessSeed;}
+    @XmlElement
+    public void setAGuessSeed(String GS) {this.guessSeed = GS;}
 
     public String getFSSNum() {return SSNum;}
       @XmlElement
@@ -451,6 +546,7 @@ class BlockRecord{
     public String getGRx() {return Rx;}
      @XmlElement
     public void setGRx(String D){this.Rx = D;}
+
 
 }
 
@@ -596,7 +692,7 @@ public class Blockchain {
                     String SHASignedUUID = getEncoder().encodeToString(SignatureSuuidBytes);
 
 
-                    blockArray[n].setBlockNum(" ");
+                    //blockArray[n].setBlockNum("");
                     blockArray[n].setABlockID(suuid);                                                           //set UUID
                     blockArray[n].setASignedUUIDSHA256(SHASignedUUID);                                          //set SHASignedUUID with private Key
                     blockArray[n].setTimeStamp(TimeStampString);
@@ -648,16 +744,18 @@ public class Blockchain {
                     blockArray[n].setASignedSHA256(SHASignedInputDash);
 
 
-
+/*
                     // code to pull down block header and test verification of public / private key with SHA string
                     byte[] testSignatureUUID = getDecoder().decode(blockArray[n].getASignedUUIDSHA256());
                     byte[] testSignatureInput = getDecoder().decode(blockArray[n].getASignedSHA256());
+
+
 
                     verified = verifySig(SHA256_UUIDString.getBytes(), keyPair.getPublic(), testSignatureUUID);
                     //System.out.println("Has the restored signature been verified: " + verified + "\n");
                     verified = verifySig(SHA256InputDataString.getBytes(), keyPair.getPublic(), testSignatureInput);
                     //System.out.println("Has the restored signature been verified: " + verified + "\n");
-
+*/
 
                     n++;
                 }
@@ -769,11 +867,11 @@ public class Blockchain {
         }
 
 
-/*
+
         try{Thread.sleep(1000);}catch(Exception e){} // Wait for multicast to fill incoming queue for our example.
 
-        new Thread(new UnverifiedBlockConsumer(queue, PID)).start(); // Start consuming the queued-up unverified blocks
-*/
+        new Thread(new UnverifiedBlockConsumer(queue, PID, keyPair)).start(); // Start consuming the queued-up unverified blocks
+
 
     }
 }
