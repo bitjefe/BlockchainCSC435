@@ -211,7 +211,6 @@ class UnverifiedBlockServer implements Runnable {                               
     }
 }
 
-
 class UnverifiedBlockConsumer implements Runnable {                                             // class defintion of UnverifiedBlockConsumer
     BlockingQueue<String> queue;                                                                // local definition of BlockingQueue queue to hold strings
     int PID;                                                                                    // local definiton of process id PID of type int
@@ -313,6 +312,7 @@ class UnverifiedBlockConsumer implements Runnable {                             
                     byte[] signatureSHA256InputDataBytes = signData(signedSHA256InputDataString.getBytes(), keyPair.getPrivate());                                    // get bytes of Signed Input Data SHA String
                     boolean verifiedSignedSHA256InputData = verifySig(signedSHA256InputDataString.getBytes(), keyPair.getPublic(), signatureSHA256InputDataBytes);   //verified if it corresponds to public key sig
 
+
                     System.out.println("SHA Input Data Verified = " + verifiedSignedSHA256InputData);                                                                // print to the console if the verification was true or false
                 } catch (JAXBException e) { e.printStackTrace(); }                                                                                      //catch any JAXBExceptions here
 
@@ -404,12 +404,9 @@ class UnverifiedBlockConsumer implements Runnable {                             
                     System.out.println("Puzzle solved!");
                     System.out.println("The seed was: " + randString);
                     blockRecord.setAGuessSeed(randString);
-
+                    blockRecord.setASignedSHA256(concatString);
 
                     // SET CREDIT HERE?????????
-
-
-
                     break;
                 }
 
@@ -555,11 +552,14 @@ class BlockchainServer implements Runnable {                        // class def
     }
 }
 
-
 class BlockLedgerWorker extends Thread {
     Socket sock;
+    BlockingQueue<String> blockchainQueue;                                              // local definition of blockchainQueue (holds multiple iterations of blockchains)
 
-    BlockLedgerWorker (Socket s) {sock = s;}
+    BlockLedgerWorker(Socket s, BlockingQueue<String> blockchainQueue) {                //blockLedgerWorker constructor
+        sock = s;
+        this.blockchainQueue = blockchainQueue;
+    }
     public void run(){
         try{
             BlockLedger blockLedger = null;
@@ -575,6 +575,8 @@ class BlockLedgerWorker extends Thread {
 
             String XMLStringSent = inBuffer.toString();                                          // convert our inBuffer to XMLStringSent of type String. This will be added to our queue of unverifiedBlocks
 
+            blockchainQueue.add(XMLStringSent);                                             // store the raw XMLString to the blockchainQueue for later processing & verification
+
             System.out.println("New Ledger \n"  + XMLStringSent);                          // prove that our blocks are sent to the unverified blockserver as XML, print to console (you can view this in the BlockchainLog.txt look for XML String sent)
 
             JAXBContext jaxbContext = JAXBContext.newInstance(BlockLedger.class);               //create a new JAXB instance of BlockRecord class
@@ -583,7 +585,6 @@ class BlockLedgerWorker extends Thread {
             StreamSource streamSource = new StreamSource(new StringReader(XMLStringSent));              //use StreamSource object to prepare XMLString to be unmarshalled into BlockRecord JAXBelement below: Used https://docs.oracle.com/javase/8/docs/api/javax/xml/transform/stream/StreamSource.html as reference
 
             JAXBElement<BlockLedger> blockLedgerJAXBElement = jaxbUnMarshaller.unmarshal(streamSource, BlockLedger.class);              // Create new JAXBElement of type BlockRecord. Unmarshal XML to BLockRecord class: Used java docs for this line and next line of code: https://docs.oracle.com/javase/8/docs/api/javax/xml/bind/JAXBElement.html
-
 
             blockLedger = blockLedgerJAXBElement.getValue();
             System.out.println(blockLedger.getBlockRecord());
@@ -601,7 +602,10 @@ class BlockLedgerWorker extends Thread {
     }
 }
 
-class BlockLedgerServer implements Runnable {                               //added a 4th server to handle just the XML BlockLedger
+class BlockLedgerServer implements Runnable {                                                                       //added a 4th server to handle just the XML BlockLedger
+    BlockingQueue<String> blockchainQueue;                                                                          // blockingQueue to store multiple blockchains
+
+    public BlockLedgerServer(BlockingQueue<String> blockchainQueue) { this.blockchainQueue = blockchainQueue;}           // constructor for BlockLedgerServer
     public void run(){
         int q_len = 6;                                                      // number of queued requests set to 6.
         Socket sock;                                                        // local sock defintion of type Socket
@@ -610,7 +614,7 @@ class BlockLedgerServer implements Runnable {                               //ad
             ServerSocket servsock = new ServerSocket(Ports.BlockLedgerServerPort, q_len);
             while (true) {
                 sock = servsock.accept();
-                new BlockLedgerWorker (sock).start();                                   //connects at BlockLedgerServerPort and launches a BlockLedgerWorker
+                new BlockLedgerWorker (sock, blockchainQueue).start();                                   //connects at BlockLedgerServerPort and launches a BlockLedgerWorker
             }
         }catch (IOException ioe) {System.out.println(ioe);}                             // catch IO exceptions and print stackTrace if found
     }
@@ -628,7 +632,7 @@ class BlockLedger{                                                              
 
 
 @XmlRootElement
-class BlockRecord{
+class BlockRecord{                                                      // class defintion of BlockRecord from given CE code in blockchain assignment instructions (utility program)
 
     //BlockRecord local field definitions
     Integer BlockNum;
@@ -670,8 +674,6 @@ class BlockRecord{
     public String getTimeStamp() {return timeStamp;}
     @XmlElement
     public void setTimeStamp(String TIME){this.timeStamp = TIME;}                                       // Block TimeStamp
-
-
 
     public String getASHA256String() {return SHA256String;}
      @XmlElement
@@ -776,10 +778,9 @@ public class Blockchain {
 
     }
 
-
     public BlockRecord[] BlockInput(KeyPair keyPair) {                  // BlockInput method definition. Used blockchain utilities program from CE to build these
         String FILENAME;                                                // define the FILENAME to read in
-        String BlockReturned =null;
+        String BlockReturned = null;
 
         BlockRecord[] blockArray = new BlockRecord[20];                 // initialize a BlockRecord of size 20
 
@@ -796,9 +797,9 @@ public class Blockchain {
         int pnum;
 
         // determine which process we are in
-        if(PID == 0)         pnum = 0;
-        else if (PID == 1)   pnum = 1;
-        else if (PID == 2)   pnum = 2;
+        if (PID == 0) pnum = 0;
+        else if (PID == 1) pnum = 1;
+        else if (PID == 2) pnum = 2;
         else pnum = 0;
 
 
@@ -807,10 +808,16 @@ public class Blockchain {
                 Ports.BlockchainServerPort + Ports.BlockLedgerServerPort + "\n");
 
         // read in the correct .txt file based on the PID (pnum)
-        switch(pnum){
-            case 1: FILENAME = "BlockInput1.txt"; break;
-            case 2: FILENAME = "BlockInput2.txt"; break;
-            default: FILENAME= "BlockInput0.txt"; break;
+        switch (pnum) {
+            case 1:
+                FILENAME = "BlockInput1.txt";
+                break;
+            case 2:
+                FILENAME = "BlockInput2.txt";
+                break;
+            default:
+                FILENAME = "BlockInput0.txt";
+                break;
         }
 
         System.out.println("Using input file: " + FILENAME);
@@ -877,8 +884,8 @@ public class Blockchain {
 
 
                     //create our SHA String from the input data (place in dataHasH later submission)
-                    String inputData = blockArray[n].getFSSNum() + blockArray[n].getFFname() + blockArray[n].getFLname()+
-                                       blockArray[n].getFDOB()+blockArray[n].getGDiag()+blockArray[n].getGTreat() + blockArray[n].getGRx() ;
+                    String inputData = blockArray[n].getFSSNum() + blockArray[n].getFFname() + blockArray[n].getFLname() +
+                            blockArray[n].getFDOB() + blockArray[n].getGDiag() + blockArray[n].getGTreat() + blockArray[n].getGRx();
 
                     // create SHA-256 hash of input data
                     MessageDigest mdInputData = MessageDigest.getInstance("SHA-256");
@@ -908,8 +915,12 @@ public class Blockchain {
                     n++;        // go to the next blockrecord
                 }
 
-            } catch (IOException e) {e.printStackTrace();}                  //catch and handle exceptions here
-        } catch (Exception e) {e.printStackTrace();}
+            } catch (IOException e) {
+                e.printStackTrace();
+            }                  //catch and handle exceptions here
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
         return blockArray;                                                  // return our BlockRecord  (blockArray)
     }
 
@@ -933,17 +944,19 @@ public class Blockchain {
         Socket sock;
         PrintStream toServer;
 
-        try{
+        try {
             Thread.sleep(1000);                                                                 // sleep 1000 millis to settle program. Not sure if needed here since keys are settled but it seemed to help smooth the processes concurrency
 
-            for(int i=0; i< numProcesses; i++){                                                     // send the block in form of StringWriter to all the processes
+            for (int i = 0; i < numProcesses; i++) {                                                     // send the block in form of StringWriter to all the processes
                 sock = new Socket(serverName, Ports.UnverifiedBlockServerPortBase + i);     //connect to the unverifiedBlockServerPorts for all processes and create a way to send output
                 toServer = new PrintStream(sock.getOutputStream());
                 toServer.println(block);                                            // send the multicast data
                 toServer.flush();                                                   // clear our PrintStream buffer
                 sock.close();                                                       //close the connection
             }
-        }catch (Exception x) {x.printStackTrace ();}
+        } catch (Exception x) {
+            x.printStackTrace();
+        }
     }
 
 
@@ -951,9 +964,9 @@ public class Blockchain {
         Socket sock;                                                                                    // local definition of sock of type Socket
         PrintStream toServer;                                                                           // local definition of toServer of type PrintStream
 
-        try{
-            for(int i=0; i< numProcesses; i++){                                                         // for loop to send public keys to their respective servers
-                sock = new Socket(serverName, (Ports.KeyServerPortBase+i));                             // open up new connection to the KeyPortServers based on PID
+        try {
+            for (int i = 0; i < numProcesses; i++) {                                                         // for loop to send public keys to their respective servers
+                sock = new Socket(serverName, (Ports.KeyServerPortBase + i));                             // open up new connection to the KeyPortServers based on PID
                 toServer = new PrintStream(sock.getOutputStream());                                     // open up new OutputStream to this sock and initialized a PrintStream object "toServer"
                 toServer.println(PID);                                                                  // send the Process ID to the KeyPortServers
 
@@ -967,10 +980,14 @@ public class Blockchain {
                 sock.close();                                                                           // close the current connection only
             }
             Thread.sleep(1000);                                                                   // sleep a 1000 milliseconds to allow keys to reach their destinations safely
-        }catch (Exception x) {x.printStackTrace ();}                                                    // catch exceptions and print stack trace if caught
+        } catch (Exception x) {
+            x.printStackTrace();
+        }                                                    // catch exceptions and print stack trace if caught
     }
 
     public static void main(String args[]) throws Exception {                           //Blockchain.java main
+        System.out.println("Console Commands allowed: ");
+
         int q_len = 8;                                                                  // number of queued requests set to 8
         int PID = (args.length < 1) ? 0 : Integer.parseInt(args[0]);                    // set PID to the argument input.  If nothing is input, set PID to 0
 
@@ -980,20 +997,28 @@ public class Blockchain {
         ProcessBlock[] PBlock = new ProcessBlock[4];                                     // create new ProcessBlock object to store process information per process (PID). pass to all constructors
 
         final BlockingQueue<String> queue = new PriorityBlockingQueue<>();              // create instance of BlockingQueue to hold string of blocks to add/consume later
+        final BlockingQueue<String> blockchainQueue = new PriorityBlockingQueue<>();    // create an instance of BlockingQueue to queue up multiple blockchains for later verification
+
         new Ports().setPorts(PID);                                                      // create an instance of Ports, pass the PID, and set the Ports for communication / multicasting
 
-        KeyPair keyPair = new Blockchain(PID).generateKeyPair(999+PID);            // generate a Keypair for each process
+        KeyPair keyPair = new Blockchain(PID).generateKeyPair(999 + PID);            // generate a Keypair for each process
 
         new Thread(new PublicKeyServer(PBlock)).start();                                  // start a new thread for PublicKeyServer and pass it PBlock, then initiate it
-        new Thread(new UnverifiedBlockServer(queue,PID, PBlock)).start();                 // start a new thread for UnverifiedBlockServer and pass it our queue, PID, and PBlock, then initiate it
+        new Thread(new UnverifiedBlockServer(queue, PID, PBlock)).start();                 // start a new thread for UnverifiedBlockServer and pass it our queue, PID, and PBlock, then initiate it
         new Thread(new BlockchainServer()).start();                                       // start a new thread for BlockchainServer and pass it nothing, then initiate it
-        new Thread(new BlockLedgerServer()).start();                                      // start a new thread for BlockLedgerServer and pass it nothing, then initiate it
-        try{Thread.sleep(1000);}catch(Exception e){}                                // sleep for 1000 millis to let server's boot up
+        new Thread(new BlockLedgerServer(blockchainQueue)).start();                                      // start a new thread for BlockLedgerServer and pass it nothing, then initiate it
+        try {
+            Thread.sleep(1000);
+        } catch (Exception e) {
+        }                                // sleep for 1000 millis to let server's boot up
 
         new Blockchain(PID).MultiSendKeys(keyPair);                                         // initiate the multicast of keys
 
-        try{Thread.sleep(1000);}catch(Exception e){}                                // sleep for 1000 millis to let keys reach their servers
-
+        try {
+            Thread.sleep(1000);
+        } catch (Exception e) {
+        }                                // sleep for 1000 millis to let keys reach their servers
+    /*
         PublicKey publicKey0 = PBlock[0].getPubKey();                                       // set the publicKeys for use in verification later (future submission)
         PublicKey publicKey1 = PBlock[1].getPubKey();
         PublicKey publicKey2 = PBlock[2].getPubKey();
@@ -1008,32 +1033,37 @@ public class Blockchain {
         }else {
             System.out.println("String version of Public Keys ARE NOT equal");
         }
-
+*/
         BlockRecord[] blockRecord = new Blockchain(PID).BlockInput(keyPair);                        // Multicast some new unverified blocks out to all servers as data
 
         int indexCount = 0;                                                                         // count how many blockrecords have been added
-        while(blockRecord[indexCount]!=null){
+        while (blockRecord[indexCount] != null) {
             indexCount++;
         }
 
-        for(int i=0;i<indexCount;i++){                                                              // marshal the blockRecords to all the server processes
-            String XMLString = Marshaller(blockRecord,i);
+        for (int i = 0; i < indexCount; i++) {                                                              // marshal the blockRecords to all the server processes
+            String XMLString = Marshaller(blockRecord, i);
         }
 
-        try{Thread.sleep(1000);}catch(Exception e){}                                        // sleep for 1000 millis to fill up the blocking queue
+        try {
+            Thread.sleep(1000);
+        } catch (Exception e) {
+        }                                        // sleep for 1000 millis to fill up the blocking queue
 
 
         new Thread(new UnverifiedBlockConsumer(queue, PID, keyPair, PBlock)).start();           // start a new thread for UnverifiedBlockConsumer and pass it our queue, PID, keyPair and PBlock, then initiate it
 
         Thread.sleep(10000);                                                            // sleep for 1000 millis to start consuming up the blocking queue
 
-        while(queue.size()!=0){                                                               // while the queue is still full of blocks: Do this to make sure all the credit is assigned correctly
+        while (queue.size() != 0) {                                                               // while the queue is still full of blocks: Do this to make sure all the credit is assigned correctly
             System.out.println("queue length = " + queue.size());
             System.out.println("More blocks to consume");
             Thread.sleep(10000);                                                        // sleep for 1000 millis
         }
 
-        System.out.println("Credit for P" + PBlock[PID].getProcessID() +"= " +PBlock[PID].getCredit());               // display credit for current process. Will multicast this in later version
+        if (PBlock[PID] != null) {
+            System.out.println("Credit for P" + PBlock[PID].getProcessID() + "= " + PBlock[PID].getCredit());               // display credit for current process. Will multicast this in later version
+        }
     }
 }
 
